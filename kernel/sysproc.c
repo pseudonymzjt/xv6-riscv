@@ -105,3 +105,19 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+// block a specific process with a unique mask
+uint64
+sys_interpose(void)
+{
+  int mask;
+  char path[MAXPATH];
+  struct proc *p = myproc();
+  argint(0, &mask);
+  if(argstr(1, path, sizeof(path)) < 0) return -1;
+
+  p->sandbox_mask = mask;
+  safestrcpy(p->allowed_path, path, sizeof(p->allowed_path));
+
+  return 0;
+}

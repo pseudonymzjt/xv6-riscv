@@ -289,6 +289,9 @@ kfork(void)
 
   pid = np->pid;
 
+  np->sandbox_mask = p->sandbox_mask;
+  safestrcpy(np->allowed_path, p->allowed_path, sizeof(np->allowed_path));
+
   release(&np->lock);
 
   acquire(&wait_lock);
