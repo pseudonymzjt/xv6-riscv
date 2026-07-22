@@ -1,0 +1,10 @@
+Looking at the backtrace output, which function called syscall?
+usertrap();
+What is the value of p->trapframe->a7 and what does that value represent?
+15; It is a series number for the program to look up for the system function to call.
+What was the previous mode that the CPU was in?
+According to the specification of Supervisor Status Register and the result, the 8th position of $sstatus is 0, therefore the CPU in user mode previously.
+Why does the kernel crash?
+The address 0x0 matches _entry-0x80000000, which indicates the entry address is 0x80000000 and 0 isn;t a legal address. The value of $scause is 0xd, and in the manual, it indicates a page load fault, exactly what happened when the program tried to load a number from an illegal address.
+What is the name of the process that was running when the kernel paniced? What is its process id (pid)?
+init; 1
