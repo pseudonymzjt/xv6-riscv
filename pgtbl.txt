@@ -1,0 +1,20 @@
+For every page table entry in the print_pgtbl output, explain what it logically contains and what its permission bits are. Figure 3.4 in the xv6 book might be helpful, although note that the figure might have a slightly different set of pages than process that's being inspected here. Note that xv6 doesn't place the virtual pages consecutively in physical memory.
+"在 print_pgtbl 输出中，每一行代表进程虚拟地址空间中的一个虚页映射。它们的逻辑含义和权限位具体如下：
+va 0x0 & va 0x1000 (代码段/Text):
+权限: perm 0x5B (对应有效 V、可读 R、可执行 X、用户 U)。
+逻辑内容: 存放用户程序的二进制指令，允许用户态执行但禁止写入。
+va 0x2000 (数据段/Data):
+权限: perm 0x17 (对应有效 V、可读 R、可写 W、用户 U)。
+逻辑内容: 存放全局变量和静态变量，允许用户态读写但不可执行。
+va 0x3000 (保护页/Guard Page):
+权限: perm 0x07 (对应有效 V、可读 R、可写 W，但无用户 U 权限)。
+逻辑内容: 栈底的安全缓冲区。用户态无权访问，一旦栈溢出访问此页，将触发异常保护系统。
+va 0x4000 (栈/Stack)
+权限：perm 0xD7（对应有效 V、可读 R、可写 W，用户 U）。
+逻辑内容：栈。用户态可读、可写、可访问。
+va 0x3FFFFFE000（Trapframe）
+权限：perm 0xC7（对应有效 V、可读 R、可写 W，但无用户 U 权限）。
+逻辑内容：转移到内核态暂存用户寄存器的缓冲区。
+va 0x3FFFFFF000（trampoline）
+权限：perm 0x4B （对应有效 V、可读 R、可执行 X，无用户权限 U，不可修改）
+逻辑内容：存放用于在用户态和内核态之间跳转的汇编代码。
