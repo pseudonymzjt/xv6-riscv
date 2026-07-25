@@ -27,3 +27,5 @@ barrier
 *.pcap
 TAGS
 
+.cache/
+compile_flags.txt
