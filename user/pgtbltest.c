@@ -109,9 +109,11 @@ supercheck(char *end)
     if(pte == 0)
       err("no pte");
     if ((uint64) last_pte != 0 && pte != last_pte) {
+        printf("pte different: pte: %lx, last_pte: %lx\n", pte, last_pte);
         err("pte different");
     }
     if((pte & PTE_V) == 0 || (pte & PTE_R) == 0 || (pte & PTE_W) == 0){
+      printf("pte wrong: %lx\n", pte);
       err("pte wrong");
     }
     last_pte = pte;
@@ -140,11 +142,13 @@ superpg_fork()
     err("sbrk failed");
 
   // check if parent has super pages
+  printf("check if parent has super pages\n");
   supercheck(end);
   if((pid = fork()) < 0) {
     err("fork");
   } else if(pid == 0) {
     // check if child's address space has super pages
+    printf("check if child's address space has super pages\n");
     supercheck(end);
     exit(0);
   } else {

@@ -199,12 +199,13 @@ proc_pagetable(struct proc *p)
   // at the highest user virtual address.
   // only the supervisor uses it, on the way
   // to/from user space, so not PTE_U.
+  printf("from proc_pagetable: usyscall\n");
   if(mappages(pagetable, USYSCALL, PGSIZE,
               (uint64)p->usyscall, PTE_R | PTE_U) < 0){
     uvmfree(pagetable, 0);
     return 0;
   }
-
+  printf("from proc_pagetable: trampoline\n");
   if(mappages(pagetable, TRAMPOLINE, PGSIZE,
               (uint64)trampoline, PTE_R | PTE_X) < 0){
     uvmfree(pagetable, 0);
@@ -213,6 +214,7 @@ proc_pagetable(struct proc *p)
 
   // map the trapframe page just below the trampoline page, for
   // trampoline.S.
+  printf("from proc_pagetable: trapframe\n");
   if(mappages(pagetable, TRAPFRAME, PGSIZE,
               (uint64)(p->trapframe), PTE_R | PTE_W) < 0){
     uvmunmap(pagetable, TRAMPOLINE, 1, 0);
