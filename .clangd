@@ -1,9 +1,19 @@
 CompileFlags:
   Add:
-    # 启用本次实验的宏定义
-    - -DLAB_PGTBL
-    # 导入 kernel 和 user 头文件搜索路径，防止 clangd 报 "file not found" 的错误
-    - -Ikernel
-    - -Iuser
-    # 显式指定目标架构为 RISC-V 64位，避免 clangd 使用你本机的 gcc 导致编译器内置宏冲突
-    - --target=riscv64
+    - "-target"
+    - "riscv64-unknown-elf"
+    - "-march=rv64g"
+    - "-mabi=lp64d"
+    - "-ffreestanding"
+    - "-nostdlib"
+    - "-Ikernel"
+    - "-Iuser"
+    - "-I."
+    # 改为直接引入 types.h，配合 -Ikernel 路径更不容易出错
+    - "-include"
+    - "types.h"
+
+Diagnostics:
+  Suppress:
+    - "unused-parameter"
+    - "unused-variable"
