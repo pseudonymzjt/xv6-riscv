@@ -1,0 +1,10 @@
+-xc
+--target=riscv64-unknown-elf
+-I.
+-Ikernel
+-Iuser
+-mcmodel=medany
+-mno-relax
+-ffreestanding
+-fno-common
+-Wall
