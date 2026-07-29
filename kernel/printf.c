@@ -157,7 +157,7 @@ backtrace(void)
   uint64 start_page = PGROUNDDOWN(fp);
   printf("backtrace:\n");
   while(PGROUNDDOWN(fp) == start_page) {
-    printf("%lx\n", *(uint64 *)(fp - 8));
+    printf("%p\n", (void *)*(uint64 *)(fp - 8));
     fp = *(uint64 *)(fp - 16);
   }
 }
