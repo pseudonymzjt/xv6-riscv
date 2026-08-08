@@ -117,23 +117,34 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
 // Look up a virtual address, return the physical address,
 // or 0 if not mapped.
 // Can only be used to look up user pages.
+// address COW separately
 uint64
 walkaddr(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
 
-  if(va >= MAXVA)
-    return 0;
+  if(va >= MAXVA) return 0;
 
   pte = walk(pagetable, va, 0);
-  if(pte == 0)
-    return 0;
-  if((*pte & PTE_V) == 0)
-    return 0;
-  if((*pte & PTE_U) == 0)
-    return 0;
+  if(pte == 0 || !(*pte & PTE_V) || !(*pte & PTE_U)) return 0;
+
   pa = PTE2PA(*pte);
+
+  if(*pte & PTE_COW) {
+    uint64 newpa = (uint64)kalloc();
+    if(newpa == 0) return 0;
+    
+    memmove((void*)newpa, (void*)pa, PGSIZE);
+    
+    uint flags = PTE_FLAGS(*pte);
+    flags &= ~PTE_COW;
+    flags |= PTE_W;
+    *pte = PA2PTE(newpa) | flags;
+    kfree((void*)pa); 
+    return newpa;
+  }
+
   return pa;
 }
 
@@ -307,17 +318,18 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       continue;   // physical page hasn't been allocated
     pa = PTE2PA(*pte);
-    *pte = (*pte & ~PTE_W) | PTE_COW;
+    if(*pte & PTE_W) {
+      *pte = (*pte & ~PTE_W) | PTE_COW;
+    }
     flags = PTE_FLAGS(*pte);
     // if((mem = kalloc()) == 0)
     //   goto err;
     // memmove(mem, (char*)pa, PGSIZE);
     if(mappages(new, i, PGSIZE, pa, flags) != 0){
-      printf("something goes wrong\n");
       // kfree(mem);
       goto err;
     }
-    printf("called successfully\n");
+    kincref(pa);
   }
   return 0;
 
@@ -356,7 +368,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     pa0 = walkaddr(pagetable, va0);
     if(pa0 == 0) {
       if((pa0 = vmfault(pagetable, va0, 0)) == 0) {
-        return -1;
+          return -1;
       }
     }
 
@@ -455,33 +467,41 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 uint64
 vmfault(pagetable_t pagetable, uint64 va, int read)
 {
-  uint64 mem;
   struct proc *p = myproc();
-  pte_t* pte;
-
-  if (va >= p->sz)
+  
+  if (va >= p->sz || va >= MAXVA)
     return 0;
   va = PGROUNDDOWN(va);
-  if(ismapped(pagetable, va)) {
-      if(r_scause() == 15) {
-        printf("enter here\n");
-        va = r_stval();
-        pte = (pte_t*)walkaddr(pagetable, va);
-        if(!(pte && (*pte & PTE_COW))) {
-          return 0;
-        }
-      }
-      else return 0;
+
+  pte_t *pte = walk(pagetable, va, 0);
+  if (pte == 0) return 0;
+  if((*pte & PTE_V) == 0) return 0;
+  if((*pte & PTE_U) == 0) return 0;
+
+  if (*pte & PTE_COW) {
+    uint64 old_pa = PTE2PA(*pte);
+    uint64 new_pa = (uint64)kalloc();
+    if (new_pa == 0)
+      return 0;
+
+    memmove((void *)new_pa, (void *)old_pa, PGSIZE);
+
+    uint flags = PTE_FLAGS(*pte);
+    flags &= ~PTE_COW;
+    flags |= PTE_W;
+
+    *pte = PA2PTE(new_pa) | flags;
+    kfree((void *)old_pa);
+
+    return new_pa;
   }
-  mem = (uint64) kalloc();
-  if(mem == 0)
-    return 0;
-  memset((void *) mem, 0, PGSIZE);
-  if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W|PTE_U|PTE_R) != 0) {
-    kfree((void *)mem);
-    return 0;
-  }
-  return mem;
+
+  // if(*pte & PTE_W) {
+  //   printf("called\n");
+  //   return PTE2PA(*pte);
+  // }
+
+  return 0;
 }
 
 int
