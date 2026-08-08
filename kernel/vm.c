@@ -299,7 +299,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -307,14 +307,17 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
     if((*pte & PTE_V) == 0)
       continue;   // physical page hasn't been allocated
     pa = PTE2PA(*pte);
+    *pte = (*pte & ~PTE_W) | PTE_COW;
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    if(mappages(new, i, PGSIZE, pa, flags) != 0){
+      printf("something goes wrong\n");
+      // kfree(mem);
       goto err;
     }
+    printf("called successfully\n");
   }
   return 0;
 
@@ -454,12 +457,21 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
 {
   uint64 mem;
   struct proc *p = myproc();
+  pte_t* pte;
 
   if (va >= p->sz)
     return 0;
   va = PGROUNDDOWN(va);
   if(ismapped(pagetable, va)) {
-    return 0;
+      if(r_scause() == 15) {
+        printf("enter here\n");
+        va = r_stval();
+        pte = (pte_t*)walkaddr(pagetable, va);
+        if(!(pte && (*pte & PTE_COW))) {
+          return 0;
+        }
+      }
+      else return 0;
   }
   mem = (uint64) kalloc();
   if(mem == 0)
