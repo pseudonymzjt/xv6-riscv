@@ -17,6 +17,22 @@ static uint32 local_ip = MAKE_IP_ADDR(10, 0, 2, 15);
 // qemu host's ethernet address.
 static uint8 host_mac[ETHADDR_LEN] = { 0x52, 0x55, 0x0a, 0x00, 0x02, 0x02 };
 
+// 队列中的数据包节点
+struct rxbuf {
+  struct rxbuf *next;
+  char *data;
+  int len;
+};
+
+// 代表一个被绑定的 UDP 端口（Socket）
+struct sock {
+  uint16 port;
+  struct spinlock lock;
+  struct rxbuf *rxq;
+};
+
+#define MAX_SOCKS 16
+static struct sock socket_pool[MAX_SOCKS]; // 静态 Socket 池，避免 kalloc 分配 socket 页面
 static struct spinlock netlock;
 
 void
@@ -34,11 +50,44 @@ netinit(void)
 uint64
 sys_bind(void)
 {
-  //
-  // Your code here.
-  //
+  int port;
+  argint(0, &port);
+  acquire(&netlock);
+  
+  for (int i = 0; i < MAX_SOCKS; i++) {
+    if (socket_pool[i].port == port) {
+      acquire(&socket_pool[i].lock);
+      struct rxbuf *curr = socket_pool[i].rxq;
+      while (curr) {
+        struct rxbuf *next = curr->next;
+        kfree(curr->data); 
+        curr = next;
+      }
+      socket_pool[i].rxq = 0;
+      release(&socket_pool[i].lock);
+      release(&netlock);
+      return 0;
+    }
+  }
 
-  return -1;
+  struct sock *s = 0;
+  for (int i = 0; i < MAX_SOCKS; i++) {
+    if (socket_pool[i].port == 0) {
+      s = &socket_pool[i];
+      break;
+    }
+  }
+
+  if (s == 0) {
+    release(&netlock);
+    return -1;
+  }
+
+  s->port = port;
+  s->rxq = 0;
+
+  release(&netlock);
+  return 0;
 }
 
 //
@@ -74,10 +123,60 @@ sys_unbind(void)
 uint64
 sys_recv(void)
 {
-  //
-  // Your code here.
-  //
-  return -1;
+  int dport, maxlen; 
+  uint64 src, sport, buf;
+  argint(0, &dport);
+  argaddr(1, &src);
+  argaddr(2, &sport);
+  argaddr(3, &buf);
+  argint(4, &maxlen);
+
+  uint64 ord = dport;
+  
+  acquire(&netlock);
+  struct sock* p = 0;
+  for (int i = 0; i < MAX_SOCKS; i++) {
+    if (socket_pool[i].port == ord) {
+      p = &socket_pool[i];
+      break;
+    }
+  }
+  release(&netlock);
+
+  if(!p) {
+    return -1;
+  }
+
+  acquire(&p->lock);
+  while(!p->rxq) sleep(p, &p->lock);
+  struct rxbuf* node = p->rxq;
+  p->rxq = p->rxq->next;
+  release(&p->lock);
+
+  struct eth *eth = (struct eth *)node->data;
+  struct ip *ip = (struct ip *)(eth + 1);
+
+  if(ip->ip_p != IPPROTO_UDP) {
+    kfree(node->data);
+    return -1;
+  }
+
+  int ip_hl = (ip->ip_vhl & 0x0F) * 4;
+  struct udp *udp = (struct udp *)((char *)ip + ip_hl);
+  int payload = ntohs(udp->ulen) - sizeof(struct udp);
+  uint32 ssrc = ntohl(ip->ip_src);
+  uint16 ssport = ntohs(udp->sport);
+  int copy_len = payload > maxlen ? maxlen : payload;
+  struct proc *pr = myproc();
+  if (copyout(pr->pagetable, src, (char *)&ssrc, sizeof(ssrc)) < 0 ||
+      copyout(pr->pagetable, sport, (char *)&ssport, sizeof(ssport)) < 0 ||
+      copyout(pr->pagetable, buf, (char*)(udp + 1), copy_len) < 0) {
+    kfree(node->data);
+    return -1;
+  }
+  
+  kfree(node->data);
+  return copy_len;
 }
 
 // This code is lifted from FreeBSD's ping.c, and is copyright by the Regents
@@ -182,16 +281,59 @@ sys_send(void)
 void
 ip_rx(char *buf, int len)
 {
-  // don't delete this printf; make grade depends on it.
   static int seen_ip = 0;
   if(seen_ip == 0)
     printf("ip_rx: received an IP packet\n");
   seen_ip = 1;
 
-  //
-  // Your code here.
-  //
+  struct eth *eth = (struct eth *)buf;
+  struct ip *ip = (struct ip *)(eth + 1);
+  if(ip->ip_p != IPPROTO_UDP) {
+    kfree(buf);
+    return;
+  }
+
+  int ip_hl = (ip->ip_vhl & 0x0F) * 4;
+  struct udp *udp = (struct udp *)((char *)ip + ip_hl);
+
+  uint64 ord = ntohs(udp->dport);
   
+  // 从静态池中查找 Socket
+  acquire(&netlock);
+  struct sock* p = 0;
+  for (int i = 0; i < MAX_SOCKS; i++) {
+    if (socket_pool[i].port == ord) {
+      p = &socket_pool[i];
+      break;
+    }
+  }
+  release(&netlock);
+
+  if(!p) {
+    kfree(buf);
+    return;
+  }
+
+  acquire(&p->lock);
+  struct rxbuf* ptr = p->rxq;
+  int i = 0;
+  for(; ptr && ptr->next; i++, ptr = ptr->next);
+  if(i >= 15) {
+    release(&p->lock);
+    kfree(buf);
+    return;
+  }
+
+  struct rxbuf* new_rxbuf = (struct rxbuf*)(buf + PGSIZE - sizeof(struct rxbuf));
+  new_rxbuf->data = buf;
+  new_rxbuf->len = len;
+  new_rxbuf->next = 0;
+
+  if(ptr) ptr->next = new_rxbuf;
+  else  p->rxq = new_rxbuf;
+  
+  wakeup(p);
+  release(&p->lock);
 }
 
 //

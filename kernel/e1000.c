@@ -109,7 +109,10 @@ e1000_transmit(char *buf, int len)
   acquire(&e1000_lock);
 
   uint64 tdt = regs[E1000_TDT];
-  if(!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) return -1;
+  if(!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) {
+    release(&e1000_lock);
+    return -1;
+  }
 
   if (tx_bufs[tdt] != 0) {
     kfree(tx_bufs[tdt]);
@@ -131,30 +134,32 @@ e1000_transmit(char *buf, int len)
 static void
 e1000_recv(void)
 {
-  //
-  // Your code here.
-  //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver a buf for each packet (using net_rx()).
-  //
-  char* buf;
-  int len;
   acquire(&e1000_lock);
+  uint32 rdt = regs[E1000_RDT];
 
   while(1) {
-    uint64 rdt = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
-    if(!(rx_ring[rdt].status & E1000_RXD_STAT_DD)) {
+    uint32 next_rdt = (rdt + 1) % RX_RING_SIZE;
+    if(!(rx_ring[next_rdt].status & E1000_RXD_STAT_DD)) {
       break;
     }
-    buf = (char *)rx_ring[rdt].addr;
-    len = rx_ring[rdt].length;
-    rx_ring[rdt].addr = (uint64)kalloc();
-    rx_ring[rdt].status = 0;
-    regs[E1000_RDT] = rdt;
+    char *buf = (char *)rx_ring[next_rdt].addr;
+    int len = rx_ring[next_rdt].length;
+    
+    char *new_buf = kalloc();
+    if (new_buf == 0) {
+      break; 
+    }
+
+    rx_ring[next_rdt].addr = (uint64)new_buf;
+    rx_ring[next_rdt].status = 0;
+    
+    rdt = next_rdt;
+
     release(&e1000_lock);
     net_rx(buf, len);
     acquire(&e1000_lock);
   }
+  regs[E1000_RDT] = rdt;
 
   release(&e1000_lock);
 }
