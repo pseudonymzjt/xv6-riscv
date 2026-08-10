@@ -13,6 +13,8 @@ static struct tx_desc tx_ring[TX_RING_SIZE] __attribute__((aligned(16)));
 #define RX_RING_SIZE 16
 static struct rx_desc rx_ring[RX_RING_SIZE] __attribute__((aligned(16)));
 
+static char *tx_bufs[TX_RING_SIZE];
+
 // remember where the e1000's registers live.
 static volatile uint32 *regs;
 
@@ -106,11 +108,22 @@ e1000_transmit(char *buf, int len)
   //
   printf("transmit is called\n");
   acquire(&e1000_lock);
+
   uint64 tdt = regs[E1000_TDT];
   if(!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) return -1;
+
+  if (tx_bufs[tdt] != 0) {
+    kfree(tx_bufs[tdt]);
+    tx_bufs[tdt] = 0;
+  }
+
   tx_ring[tdt].addr = (uint64)buf;
   tx_ring[tdt].length = len;
   tx_ring[tdt].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  tx_ring[tdt].status = 0;
+
+  tx_bufs[tdt] = buf;
+
   regs[E1000_TDT] = (tdt + 1) % TX_RING_SIZE;
   release(&e1000_lock); 
   return 0;
