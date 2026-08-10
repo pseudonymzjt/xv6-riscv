@@ -104,8 +104,15 @@ e1000_transmit(char *buf, int len)
   // return -1 on failure (e.g., there is no descriptor available)
   // so that the caller knows to free buf.
   //
-
-  
+  printf("transmit is called\n");
+  acquire(&e1000_lock);
+  uint64 tdt = regs[E1000_TDT];
+  if(!(tx_ring[tdt].status & E1000_TXD_STAT_DD)) return -1;
+  tx_ring[tdt].addr = (uint64)buf;
+  tx_ring[tdt].length = len;
+  tx_ring[tdt].cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS;
+  regs[E1000_TDT] = (tdt + 1) % TX_RING_SIZE;
+  release(&e1000_lock); 
   return 0;
 }
 
@@ -118,7 +125,7 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver a buf for each packet (using net_rx()).
   //
-
+  printf("recv is called\n");
 }
 
 void
