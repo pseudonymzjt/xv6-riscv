@@ -137,7 +137,26 @@ e1000_recv(void)
   // Check for packets that have arrived from the e1000
   // Create and deliver a buf for each packet (using net_rx()).
   //
-  printf("recv is called\n");
+  char* buf;
+  int len;
+  acquire(&e1000_lock);
+
+  while(1) {
+    uint64 rdt = (regs[E1000_RDT] + 1) % RX_RING_SIZE;
+    if(!(rx_ring[rdt].status & E1000_RXD_STAT_DD)) {
+      break;
+    }
+    buf = (char *)rx_ring[rdt].addr;
+    len = rx_ring[rdt].length;
+    rx_ring[rdt].addr = (uint64)kalloc();
+    rx_ring[rdt].status = 0;
+    regs[E1000_RDT] = rdt;
+    release(&e1000_lock);
+    net_rx(buf, len);
+    acquire(&e1000_lock);
+  }
+
+  release(&e1000_lock);
 }
 
 void
