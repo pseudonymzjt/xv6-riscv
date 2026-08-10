@@ -106,7 +106,6 @@ e1000_transmit(char *buf, int len)
   // return -1 on failure (e.g., there is no descriptor available)
   // so that the caller knows to free buf.
   //
-  printf("transmit is called\n");
   acquire(&e1000_lock);
 
   uint64 tdt = regs[E1000_TDT];
