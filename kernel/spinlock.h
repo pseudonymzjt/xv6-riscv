@@ -14,7 +14,8 @@ struct spinlock {
 #ifdef LAB_LOCK
 // Reader-writer lock.
 struct rwspinlock {
-  // Replace this with your implementation.
-  struct spinlock l;
+  //  |    63     |       62 ~ 32       |       31 ~ 0       |
+  //  |  writing  |  request_write_num  |  request_read_num  |
+  uint64 state;
 };
 #endif

@@ -124,29 +124,48 @@ release(struct spinlock *lk)
 static void
 read_acquire_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  acquire(&rwlk->l);
+  uint64 state;
+  // int count = 0;
+  while(1) {
+    // count++;
+    state = __atomic_load_n(&rwlk->state, __ATOMIC_SEQ_CST);
+    // if(count > 10000) printf("reader: %d, state: %d\n", cpuid(), state);
+    if(state & 0xffffffff00000000) continue;
+    else {
+      if(__atomic_compare_exchange_n(&rwlk->state, &state, state + 1, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) {
+        break;
+      }
+    }
+  }
 }
+
 
 static void
 read_release_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  release(&rwlk->l);
+  __atomic_fetch_sub(&rwlk->state, 1, __ATOMIC_SEQ_CST);
 }
 
 static void
 write_acquire_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  acquire(&rwlk->l);
+  uint64 state;
+  __atomic_fetch_add(&rwlk->state, 0x100000000, __ATOMIC_SEQ_CST);
+  // int count = 0;
+  while(1) {
+    // count++;
+    state = __atomic_load_n(&rwlk->state, __ATOMIC_SEQ_CST);
+    // if(count > 10000) printf("writer: %d, state: %ld\n", cpuid(), state);
+    if(!(state & 0x80000000ffffffff)) {
+      if(__atomic_compare_exchange_n(&rwlk->state, &state, (state | 0x8000000000000000) - 0x100000000, 0, __ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST)) break;
+    }
+  }
 }
 
 static void
 write_release_inner(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  release(&rwlk->l);
+  __atomic_fetch_sub(&rwlk->state, 0x8000000000000000, __ATOMIC_SEQ_CST);
 }
 
 void
@@ -180,8 +199,7 @@ write_release(struct rwspinlock *rwlk)
 void
 initrwlock(struct rwspinlock *rwlk)
 {
-  // Replace this with your implementation.
-  initlock(&rwlk->l, "rwlk");
+  rwlk->state = 0;
 }
 
 // Test rwspinlock implementation.
