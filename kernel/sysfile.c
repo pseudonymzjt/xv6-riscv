@@ -503,3 +503,103 @@ sys_pipe(void)
   }
   return 0;
 }
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr, len, offset;
+  int prot, flags, fd;
+  struct file* fp;
+  argaddr(0, &addr);
+  argaddr(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  if(argfd(4, &fd, &fp) < 0) return -1;
+  argaddr(5, &offset);
+  struct proc* p = myproc();
+  int i = 0;
+  for(; i < NVMA; i++) {
+    if(!p->vmas[i].used) break;
+    p->mmap_base -= PGROUNDUP(p->vmas[i].len);
+  }
+  if(i == NVMA) {
+    panic("no valid vma");
+  }
+  if((addr = p->mmap_base) < p->sz) {
+    panic("vma violate heap");
+  }
+  if ((flags & MAP_SHARED) && (prot & PROT_WRITE) && (!fp->writable)) {
+    return -1;
+  }
+  if ((prot & PROT_READ) && (!fp->readable)) {
+      return -1;
+  }
+  printf("alloc addr: %lx\n", addr);
+  p->vmas[i].addr = addr;
+  p->vmas[i].flags = flags;
+  p->vmas[i].fp = fp;
+  p->vmas[i].fp->ref++;
+  p->vmas[i].len = len;
+  p->vmas[i].offset = offset;
+  p->vmas[i].prot = prot;
+  p->vmas[i].used = 1;
+  
+  return addr;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr, len;
+  argaddr(0, &addr);
+  argaddr(1, &len);
+  printf("sys_munmap called: addr=%lx, len=%lx\n", addr, len);
+  struct proc* p = myproc();
+  int i = 0;
+  for(; i < NVMA; i++) {
+    if(p->vmas[i].used && addr >= p->vmas[i].addr && addr < p->vmas[i].addr + p->vmas[i].len) {
+      break;
+    }
+  }
+  if(i == NVMA) {
+    printf("sys_munmap FAILED to find VMA for addr=%lx\n", addr);
+    return -1;
+  }
+  struct VMA* vp = &p->vmas[i];
+  uint64 va = addr;
+  for (; va < addr + len; va += PGSIZE) {
+    if (vp->flags & MAP_SHARED) {
+      pte_t *pte = walk(p->pagetable, va, 0);
+      if (pte && (*pte & PTE_V)) {
+        uint64 pa = PTE2PA(*pte);
+        uint64 offset = (va - vp->addr) + vp->offset;
+
+        uint64 n = PGSIZE;
+        if (offset + n > vp->fp->ip->size) {
+            n = (vp->fp->ip->size > offset) ? (vp->fp->ip->size - offset) : 0;
+        }
+        
+        if (n > 0) {
+            begin_op();
+            ilock(vp->fp->ip);
+            writei(vp->fp->ip, 0, pa, offset, n);
+            iunlock(vp->fp->ip);
+            end_op();
+        }
+      }
+    }
+  }
+
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+  printf("uvmunmap range: [%lx, %lx)\n", addr, addr + len);
+  printf("cut off length already in munmap\n");
+  if (addr == vp->addr) {
+    vp->addr += len;
+    vp->len  -= len;
+    vp->offset += len;
+  } else {
+    vp->len -= len;
+  }
+  if(vp->len == 0) vp->used = 0;
+  return 0;
+}

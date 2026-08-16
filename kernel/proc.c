@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct cpu cpus[NCPU];
 
@@ -146,6 +150,11 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  for(int i = 0; i < NVMA; i++) {
+    memset(&p->vmas[i], 0, sizeof(p->vmas[i]));
+  }
+  p->mmap_base = 0x40000000;
+
   return p;
 }
 
@@ -169,6 +178,11 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+
+  for(int i = 0; i < NVMA; i++) {
+    memset(&p->vmas[i], 0, sizeof(p->vmas[i]));
+  }
+  p->mmap_base = 0x40000000;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -299,6 +313,17 @@ kfork(void)
   np->state = RUNNABLE;
   release(&np->lock);
 
+  acquire(&np->lock);
+  for (int i = 0; i < NVMA; i++) {
+      if (p->vmas[i].used) {          
+          np->vmas[i] = p->vmas[i];
+          if (np->vmas[i].fp) {         
+              filedup(np->vmas[i].fp);
+          }
+      }
+  }
+  np->mmap_base = p->mmap_base;
+  release(&np->lock);
   return pid;
 }
 
@@ -341,6 +366,49 @@ kexit(int status)
   iput(p->cwd);
   end_op();
   p->cwd = 0;
+
+  int i = 0;
+  for(; i < NVMA; i++) {
+    if(p->vmas[i].used && p->vmas[i].addr < TRAPFRAME && p->vmas[i].len > 0) {
+      struct VMA* vp = &p->vmas[i];
+      uint64 addr = vp->addr;
+      uint64 len = vp->len;
+      for (uint64 va = addr; va < addr + len; va += PGSIZE) {
+        if (vp->flags & MAP_SHARED) {
+          pte_t *pte = walk(p->pagetable, va, 0);
+          if (pte && (*pte & PTE_V)) {
+            uint64 pa = PTE2PA(*pte);
+            uint64 offset = (va - vp->addr) + vp->offset;
+
+            uint64 n = PGSIZE;
+            if (offset + n > vp->fp->ip->size) {
+                n = (vp->fp->ip->size > offset) ? (vp->fp->ip->size - offset) : 0;
+            }
+            
+            if (n > 0) {
+                begin_op();
+                ilock(vp->fp->ip);
+                writei(vp->fp->ip, 0, pa, offset, n);
+                iunlock(vp->fp->ip);
+                end_op();
+            }
+          }
+        }
+      }
+
+      uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+      printf("uvmunmap range: [%lx, %lx)\n", addr, addr + len);
+      if (addr == vp->addr) {
+        vp->addr += len;
+        vp->len  -= len;
+        vp->offset += len;
+      } else {
+        vp->len -= len;
+      }
+      printf("cut off length already in proc\n");
+      vp->used = 0;
+    }
+  }
 
   acquire(&wait_lock);
 

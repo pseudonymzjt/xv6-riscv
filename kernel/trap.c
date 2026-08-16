@@ -5,6 +5,10 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "fs.h"
+#include "sleeplock.h"
+#include "file.h"
+#include "fcntl.h"
 
 struct spinlock tickslock;
 uint ticks;
@@ -68,9 +72,69 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else if((r_scause() == 15 || r_scause() == 13) &&
-            vmfault(p->pagetable, r_stval(), (r_scause() == 13)? 1 : 0) != 0) {
-    // page fault on lazily-allocated page
+  } else if((r_scause() == 15 || r_scause() == 13)) {
+    // page fault: mmap 或 lazy-allocated page
+    uint64 va = r_stval();
+    if (va >= MAXVA || va >= TRAPFRAME || va == 0) {
+      setkilled(p);
+    }
+    else {
+      int i = 0;
+      struct VMA* vp = 0;
+      for(; i < NVMA; i++) {
+        if(p->vmas[i].used && va >= p->vmas[i].addr && va < p->vmas[i].addr + p->vmas[i].len) {
+          vp = &p->vmas[i];
+          break;
+        }
+      }
+
+      if(vp != 0) {
+        if (r_scause() == 15 && !(vp->prot & PROT_WRITE)) {
+          setkilled(p);
+        } 
+        else {
+          void* mem = kalloc();
+          if(mem == 0) {
+            setkilled(p);
+          } else {
+            memset(mem, 0, PGSIZE);
+            uint64 offset = PGROUNDDOWN(va) - vp->addr;
+            struct file* f = vp->fp;
+            
+            ilock(f->ip);
+            readi(f->ip, 0, (uint64)mem, offset, PGSIZE);
+            iunlock(f->ip);
+            
+            int perm = PTE_U;
+            if (vp->prot & PROT_READ)  perm |= PTE_R; 
+            if (vp->prot & PROT_WRITE) perm |= PTE_W;
+            
+            // 注意：mappages 长度必须传 PGSIZE
+            if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, perm) != 0) {
+              kfree(mem);
+              setkilled(p);
+            }
+          }
+        }
+      }
+      else {
+        if (va < p->sz && va >= PGROUNDDOWN(p->trapframe->sp)) {
+          void* mem = kalloc();
+          if(mem == 0) {
+            setkilled(p);
+          } else {
+            memset(mem, 0, PGSIZE);
+            if(mappages(p->pagetable, PGROUNDDOWN(va), PGSIZE, (uint64)mem, PTE_W | PTE_R | PTE_U) != 0) {
+              kfree(mem);
+              setkilled(p);
+            }
+          }
+        }
+        else {
+          setkilled(p);
+        }
+      }
+    }
   } else {
     printf("usertrap(): unexpected scause 0x%lx pid=%d\n", r_scause(), p->pid);
     printf("            sepc=0x%lx stval=0x%lx\n", r_sepc(), r_stval());
